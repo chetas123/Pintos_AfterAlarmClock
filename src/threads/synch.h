@@ -40,6 +40,8 @@ void cond_init (struct condition *);
 void cond_wait (struct condition *, struct lock *);
 void cond_signal (struct condition *, struct lock *);
 void cond_broadcast (struct condition *, struct lock *);
+bool sema_value_great (const struct list_elem *a_, const struct list_elem *b_);
+void sema_insert_ordered (struct list *list, struct list_elem *elem);
 
 /* Optimization barrier.
 

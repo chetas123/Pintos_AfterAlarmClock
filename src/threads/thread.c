@@ -146,7 +146,10 @@ thread_tick (void)
 
   /* Enforce preemption. */
   if (++thread_ticks >= TIME_SLICE)
-    intr_yield_on_return ();
+  {
+    if (list_entry (list_begin (&ready_list), struct thread, elem)->priority == thread_current()->priority);
+      intr_yield_on_return ();
+  }
 
   /* Check for threads to be woken up. */
   if (!list_empty (&sleeping_threads))
@@ -300,8 +303,20 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list, &t->elem);
+
+/* Commented for priority scheduling. */
+/*  list_push_back (&ready_list, &t->elem);
+  t->status = THREAD_READY; */
+
+/* Add thread to ready list according to its priority. Code added for priority scheduling. */
+  thread_insert_ordered (&ready_list, &t->elem);
   t->status = THREAD_READY;
+ 
+  if (t->priority > thread_current ()->priority && thread_current () != idle_thread)
+  {
+    thread_yield ();
+  }
+
   intr_set_level (old_level);
 }
 
@@ -317,6 +332,33 @@ void thread_sleep (struct thread *t, int ticks)
   t->status = THREAD_BLOCKED;
   schedule ();
   intr_set_level (old_level);
+}
+
+/* Returns true if value A is greater than value B, false
+   otherwise. */
+bool
+value_great (const struct list_elem *a_, const struct list_elem *b_)
+{
+  const struct thread *a = list_entry (a_, struct thread, elem);
+  const struct thread *b = list_entry (b_, struct thread, elem);
+
+  return a->priority > b->priority;
+}
+
+/* Inserts thread in the proper position in LIST in descending order by priorities.
+   Runs in O(n) average case in the number of elements in LIST. */
+void
+thread_insert_ordered (struct list *list, struct list_elem *elem)
+{
+  struct list_elem *e;
+                               
+  ASSERT (list != NULL);     
+  ASSERT (elem != NULL);
+
+  for (e = list_begin (list); e != list_end (list); e = list_next (e))
+    if (value_great (elem, e))
+      break;              
+  return list_insert (e, elem);
 }
 
 /* Returns the name of the running thread. */
@@ -384,8 +426,13 @@ thread_yield (void)
   ASSERT (!intr_context ());
 
   old_level = intr_disable ();
-  if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
+  
+  if (cur != idle_thread)
+/* Commented for priority scheduling. */
+/*    list_push_back (&ready_list, &cur->elem); */
+/* Added for priority scheduling. */
+    thread_insert_ordered (&ready_list, &cur->elem);
+  
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -412,7 +459,14 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->priority = new_priority;
+  if (thread_current ()->priority > new_priority)
+  {
+    thread_current ()->priority = new_priority;
+    if (!list_empty (&ready_list))
+      if (list_entry (list_begin (&ready_list), struct thread, elem)->priority > new_priority)
+        thread_yield ();
+  }
+
 }
 
 /* Returns the current thread's priority. */

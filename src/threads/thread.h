@@ -141,5 +141,7 @@ int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 void dec_sleeping_duration (void);
 void wakeup_threads (void);
+bool value_great (const struct list_elem *a_, const struct list_elem *b_);
+void thread_insert_ordered (struct list *list, struct list_elem *elem);
 
 #endif /* threads/thread.h */
