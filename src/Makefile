@@ -25,5 +25,9 @@ tags::
 cscope.files::
 	$(TAGS_SOURCES) > cscope.files
 
-cscope:: cscope.files
+cscope:: 
+	find . -name '*.[h\c]' > cscope.files
 	cscope -b -q -k
+
+ctags::
+	cat cscope.files | xargs ctags -R

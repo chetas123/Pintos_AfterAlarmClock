@@ -22,6 +22,7 @@ struct lock
   {
     struct thread *holder;      /* Thread holding lock (for debugging). */
     struct semaphore semaphore; /* Binary semaphore controlling access. */
+    struct thread *highest_waiter; /* Highest priority thread waiting for acquiring this lock. */
   };
 
 void lock_init (struct lock *);
@@ -40,8 +41,9 @@ void cond_init (struct condition *);
 void cond_wait (struct condition *, struct lock *);
 void cond_signal (struct condition *, struct lock *);
 void cond_broadcast (struct condition *, struct lock *);
-bool sema_value_great (const struct list_elem *a_, const struct list_elem *b_);
-void sema_insert_ordered (struct list *list, struct list_elem *elem);
+static bool value_great (const struct list_elem *a_, const struct list_elem *b_, void *);
+static bool sema_value_great (const struct list_elem *a_, const struct list_elem *b_, void *);
+static bool waiting_value_great (const struct list_elem *a_, const struct list_elem *b_, void *);
 
 /* Optimization barrier.
 

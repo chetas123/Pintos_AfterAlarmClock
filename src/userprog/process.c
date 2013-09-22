@@ -19,7 +19,49 @@
 #include "threads/vaddr.h"
 
 static thread_func start_process NO_RETURN;
-static bool load (const char *cmdline, void (**eip) (void), void **esp);
+static bool load (const char *file_name, void (**eip) (void), void **esp);
+
+struct stack *
+init_stack (void)
+{
+  struct stack *sp;
+  sp = (struct stack *) malloc (sizeof (struct stack));
+  sp->top = NULL;
+  return sp;
+}
+
+void 
+push (struct stack *sp, void *elem)
+{
+  struct stack_elem *st_elem;
+  
+  st_elem = NULL;
+  st_elem = (struct stack_elem *) malloc (sizeof (struct stack_elem));
+  if (st_elem != NULL)
+  {
+    st_elem->value = elem;
+    st_elem->next = sp->top;
+    sp->top = st_elem;
+  }
+}
+
+void *
+pop (struct stack *sp)
+{
+  void *elem;
+  struct stack_elem *temp;
+
+  elem = NULL;
+  if (sp->top != NULL)
+  {
+    elem = sp->top->value;
+    temp = sp->top;
+    sp->top = sp->top->next;
+    free(temp);
+  }
+
+  return elem;
+}
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -28,20 +70,27 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 tid_t
 process_execute (const char *file_name) 
 {
-  char *fn_copy;
+  char *fn_copy, *fn, *save;
   tid_t tid;
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
-  if (fn_copy == NULL)
+  fn = palloc_get_page (0);
+  if (fn_copy == NULL || fn == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
+  strlcpy (fn, file_name, PGSIZE);
+  fn = strtok_r (fn, " ", &save);
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+//  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (fn, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
+  {
+    palloc_free_page (fn_copy);
+    palloc_free_page (fn);
+  }
   return tid;
 }
 
@@ -59,12 +108,77 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
+
+  /* Userprog implementation. */
+  char *args, *cmd_line;
+  cmd_line = palloc_get_page (0);
+  strlcpy (cmd_line, file_name_, PGSIZE);
+  file_name = strtok_r (file_name_, " ", &args);
+
   success = load (file_name, &if_.eip, &if_.esp);
 
   /* If load failed, quit. */
   palloc_free_page (file_name);
-  if (!success) 
+  if (success)
+  {
+    struct stack *sp;
+    char *arg, *save_ptr;
+    int temp, argc_ = 0;
+    void *init_esp, *esp;
+
+    init_esp = esp = if_.esp;
+    sp = init_stack();
+    
+    /* Push arguments from left to right with pushing addresses into the auxiliary stack. */
+    for (arg = strtok_r (cmd_line, " ", &save_ptr); arg != NULL; 
+		    arg = strtok_r (NULL, " ", &save_ptr))
+    {
+      esp -= strlen (arg) + 1;
+      strlcpy (esp, arg, PGSIZE);
+      push (sp, esp);
+      argc_++;
+    }
+
+    /* Push word allignment bytes. */
+    while ((init_esp - esp) % 4)
+    {
+      esp -= 1;
+      *((char *) esp) = 0;
+    }
+
+    /* Push null pointer sentinel. */
+    esp -= 4;
+    *((int *) esp) = 0;
+
+    /* Push addresses of arguments stored in auxiliary stack. */
+    temp = argc_;
+    while (temp)
+    {
+      esp -= 4;
+      *((int *) esp) = pop (sp);
+      --temp;
+    }
+
+    /* Push address of argv[0]. */
+    esp -= 4;
+    *((int *) esp) = esp + 4;
+
+    /* Push argc. */
+    esp -= 4;
+    *((int *) esp) = argc_;
+
+    /* Push fake return address. */
+    esp -= 4;
+    *((int *) esp) = 0;
+    if_.esp = esp;
+
+    //hex_dump (esp, if_.esp, 100, true);
+ 
+  }
+  else
     thread_exit ();
+
+  palloc_free_page (cmd_line);
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -88,7 +202,21 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-  return -1;
+  int ret_status = -1;
+  struct thread *t;
+
+  t = get_thread (child_tid);
+  if (!t || t->status == THREAD_DYING || t->ret_status == -1) /* -1 is RET_STATUS_INVALID */
+    return ret_status;
+  
+  sema_down (&t->parent_sema);
+  ret_status = t->ret_status;
+  printf("%s: exit(%d)\n", t->name, t->ret_status);
+  if (t->status == THREAD_BLOCKED)
+    thread_unblock (t);
+
+  t->ret_status = RET_STATUS_INVALID;
+  return ret_status;
 }
 
 /* Free the current process's resources. */
@@ -97,6 +225,17 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
+
+  /* Added for project-2. */
+  if (!list_empty (&cur->parent_sema.waiters))
+    sema_up (&cur->parent_sema);
+  cur->exited = true;
+  if (cur->parent)
+  {
+    intr_disable ();
+    thread_block ();
+    intr_enable ();
+  }
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -315,7 +454,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   file_close (file);
   return success;
 }
-
+
 /* load() helpers. */
 
 static bool install_page (void *upage, void *kpage, bool writable);

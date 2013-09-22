@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "threads/synch.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -23,6 +24,11 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+
+#ifdef USERPROG
+#define RET_STATUS_DEFAULT 0;
+#define RET_STATUS_INVALID -1;
+#endif
 
 /* A kernel thread or user process.
 
@@ -88,7 +94,17 @@ struct thread
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
-    int sleeping_duration_left;		/* If slept then left duration. */
+    
+    /* Added for priority donation. */
+    int priority_orig;			/* Original low priority of thread if higher priority is gained. */
+    struct list waiting_threads;	/* List of threads Waiting for acquiring locks held by this thread. */
+    struct thread *waiting_for;		/* Thread for which this thread is Waiting to release lock. */
+    struct semaphore *waiting_for_sema;	/* semaphore for which this thread is waiting. */
+    struct list_elem waiting_elem;	/* List element in waiting_threads list. */
+
+    /* Added for Busy Waiting. */
+    int32_t sleeping_duration_left;	/* If slept then left duration. */
+
     struct list_elem allelem;           /* List element for all threads list. */
 
     /* Shared between thread.c and synch.c. */
@@ -97,6 +113,15 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+    
+    /* Added for project-2. */
+    int ret_status;			/* Return status after exiting; */
+    struct list child_procs;		/* List of all child processes of this process; */
+    struct list_elem child_elem;	/* List element in child_procs list. */
+    struct thread *parent;		/* Parent thread. */
+    struct semaphore parent_sema;	/* Semaphore for which parent is waiting. */
+    bool exited;
+    struct list files;
 #endif
 
     /* Owned by thread.c. */
@@ -139,9 +164,14 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+/* Added for Alarm clock and priority schedular. */
 void dec_sleeping_duration (void);
-void wakeup_threads (void);
-bool value_great (const struct list_elem *a_, const struct list_elem *b_);
-void thread_insert_ordered (struct list *list, struct list_elem *elem);
+static bool value_great (const struct list_elem *a_, const struct list_elem *b_, void *);
+void thread_donate_priority (struct thread *t, int donated_priority);
+void thread_revert_priority (int new_priority);
+
+/* Added for project-2. */
+struct thread *get_thread (tid_t tid);
 
 #endif /* threads/thread.h */
